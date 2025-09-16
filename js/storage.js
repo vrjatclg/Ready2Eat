@@ -13,16 +13,150 @@ const firebaseConfig = {
 };
 
 // Initialize Firebase
-let app, db;
+let app, db, demoMode = false;
 try {
   if (typeof firebase !== 'undefined') {
     app = firebase.initializeApp(firebaseConfig);
     db = firebase.firestore();
+    console.log("Firebase initialized successfully");
   } else {
-    console.warn("Firebase not loaded - falling back to error handling");
+    console.warn("Firebase not loaded - enabling demo mode");
+    demoMode = true;
   }
 } catch (error) {
-  console.error("Firebase initialization failed:", error);
+  console.error("Firebase initialization failed, enabling demo mode:", error);
+  demoMode = true;
+}
+
+// Demo mode - simulate Firestore with localStorage for testing
+let demoData = {};
+if (demoMode) {
+  const DEMO_KEY = "firebase_demo_data";
+  const loadDemoData = () => {
+    const raw = localStorage.getItem(DEMO_KEY);
+    return raw ? JSON.parse(raw) : {};
+  };
+  const saveDemoData = () => {
+    localStorage.setItem(DEMO_KEY, JSON.stringify(demoData));
+  };
+  demoData = loadDemoData();
+  
+  // Demo Firestore simulation
+  db = {
+    collection: (name) => ({
+      doc: (id) => ({
+        get: async () => {
+          const exists = demoData[name] && demoData[name][id];
+          return {
+            exists,
+            id,
+            data: () => exists ? demoData[name][id] : undefined
+          };
+        },
+        set: async (data, options = {}) => {
+          if (!demoData[name]) demoData[name] = {};
+          if (options.merge) {
+            demoData[name][id] = { ...demoData[name][id], ...data };
+          } else {
+            demoData[name][id] = data;
+          }
+          saveDemoData();
+        },
+        update: async (data) => {
+          if (!demoData[name]) demoData[name] = {};
+          demoData[name][id] = { ...demoData[name][id], ...data };
+          saveDemoData();
+        },
+        delete: async () => {
+          if (demoData[name] && demoData[name][id]) {
+            delete demoData[name][id];
+            saveDemoData();
+          }
+        }
+      }),
+      get: async () => {
+        const docs = demoData[name] ? Object.entries(demoData[name]).map(([id, data]) => ({
+          id,
+          data: () => data
+        })) : [];
+        return { docs };
+      },
+      where: (field, op, value) => ({
+        orderBy: (field, dir = 'asc') => ({
+          get: async () => {
+            let docs = demoData[name] ? Object.entries(demoData[name])
+              .filter(([id, data]) => {
+                if (op === '==') return data[field] === value;
+                return true;
+              })
+              .map(([id, data]) => ({ id, data: () => data })) : [];
+            
+            if (field === 'createdAt') {
+              docs.sort((a, b) => {
+                const aDate = new Date(a.data().createdAt);
+                const bDate = new Date(b.data().createdAt);
+                return dir === 'desc' ? bDate - aDate : aDate - bDate;
+              });
+            }
+            return { docs };
+          }
+        }),
+        limit: (num) => ({
+          get: async () => {
+            let docs = demoData[name] ? Object.entries(demoData[name])
+              .filter(([id, data]) => {
+                if (op === '==') return data[field] === value;
+                return true;
+              })
+              .map(([id, data]) => ({ id, data: () => data }))
+              .slice(0, num) : [];
+            return { docs, empty: docs.length === 0 };
+          }
+        }),
+        get: async () => {
+          let docs = demoData[name] ? Object.entries(demoData[name])
+            .filter(([id, data]) => {
+              if (op === '==') return data[field] === value;
+              return true;
+            })
+            .map(([id, data]) => ({ id, data: () => data })) : [];
+          return { docs, empty: docs.length === 0 };
+        }
+      }),
+      orderBy: (field, dir = 'asc') => ({
+        get: async () => {
+          let docs = demoData[name] ? Object.entries(demoData[name])
+            .map(([id, data]) => ({ id, data: () => data })) : [];
+          
+          if (field === 'createdAt') {
+            docs.sort((a, b) => {
+              const aDate = new Date(a.data().createdAt);
+              const bDate = new Date(b.data().createdAt);
+              return dir === 'desc' ? bDate - aDate : aDate - bDate;
+            });
+          }
+          return { docs };
+        }
+      })
+    }),
+    batch: () => {
+      const operations = [];
+      return {
+        set: (ref, data) => operations.push({ type: 'set', ref, data }),
+        delete: (ref) => operations.push({ type: 'delete', ref }),
+        commit: async () => {
+          // Simulate batch operations
+          for (const op of operations) {
+            if (op.type === 'set') {
+              await op.ref.set(op.data);
+            } else if (op.type === 'delete') {
+              await op.ref.delete();
+            }
+          }
+        }
+      };
+    }
+  };
 }
 
 // Default menu items for seeding
@@ -42,8 +176,6 @@ function notifyStorageUpdate() {
 export async function ensureInit() {
   if (!db) {
     console.warn("Firestore not available - this would normally initialize Firebase");
-    // In a real environment with Firebase access, this would work
-    // For now, we'll simulate successful initialization
     return true;
   }
   
