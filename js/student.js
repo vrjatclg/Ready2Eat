@@ -40,7 +40,7 @@ let menu = [];
 
 async function init() {
   await ensureInit();
-  menu = listMenu();
+  menu = await listMenu();
   renderMenu();
   restoreCart();
   bindEvents();
@@ -72,8 +72,8 @@ function bindEvents(){
   });
   ordersForm.addEventListener("submit", onViewOrdersSubmit);
 
-  window.addEventListener("cms:storage-updated", ()=> {
-    menu = listMenu();
+  window.addEventListener("cms:storage-updated", async ()=> {
+    menu = await listMenu();
     renderMenu();
   });
 }
@@ -211,14 +211,14 @@ async function onConfirmPid(e){
   if (pid.length < 3) { pidWarnings.textContent = "Please enter a valid PID"; return; }
   localStorage.setItem("cms_last_pid", pid);
 
-  const student = ensureStudent(pid);
+  const student = await ensureStudent(pid);
   if (student.blocked) {
     setNotice(`Your account (PID ${pid}) is blocked. Reason: ${student.blockReason || "Policy violation"}`, "error");
     pidDialog.close();
     return;
   }
-  const recent = getRecentCancellationCount(pid, 24);
-  const threshold = getCancelThreshold();
+  const recent = await getRecentCancellationCount(pid, 24);
+  const threshold = await getCancelThreshold();
   if (recent >= threshold - 1) {
     pidWarnings.textContent = `Warning: You have ${recent} cancellations in the last 24h. ${threshold - recent} more will result in an automatic block.`;
   } else pidWarnings.textContent = "";
@@ -226,7 +226,7 @@ async function onConfirmPid(e){
   // Create order
   const items = cart.map(c => ({ itemId: c.itemId, name: c.name, qty: c.qty, price: c.price }));
   const total = cart.reduce((n,c)=> n + c.qty*c.price, 0);
-  const order = createOrder({ pid, items, total });
+  const order = await createOrder({ pid, items, total });
 
   // Show payment flow
   paymentTotalEl.textContent = money(total);
@@ -242,10 +242,10 @@ let currentPendingOrderId = null;
 
 async function onGeneratePaymentCode(){
   if (!currentPendingOrderId) return;
-  const orders = listOrdersByPid(localStorage.getItem("cms_last_pid") || "");
+  const orders = await listOrdersByPid(localStorage.getItem("cms_last_pid") || "");
   const existingCodes = new Set(orders.map(o => (o.paymentCode||"").toUpperCase()).filter(Boolean));
   const code = generatePaymentCode(existingCodes);
-  setOrderPaymentCode(currentPendingOrderId, code);
+  await setOrderPaymentCode(currentPendingOrderId, code);
   paymentCodeText.textContent = code;
   paymentCodeBlock.hidden = false;
   // Clear cart after payment code generation to prevent duplicates
@@ -255,8 +255,8 @@ async function onGeneratePaymentCode(){
   renderCart();
 }
 
-function renderOrdersList(pid){
-  const orders = listOrdersByPid(pid);
+async function renderOrdersList(pid){
+  const orders = await listOrdersByPid(pid);
   if (orders.length === 0) {
     ordersList.innerHTML = `<div class="muted small">No orders found for PID ${pid}.</div>`;
     return;
@@ -284,15 +284,15 @@ function renderOrdersList(pid){
     `;
     ordersList.appendChild(card);
     if (canCancel) {
-      card.querySelector(`[data-cancel="${o.id}"]`).addEventListener("click", ()=>{
-        const updated = cancelOrder(o.id, "student");
-        recordCancellation(o.pid);
-        const cancels = getRecentCancellationCount(o.pid, 24);
-        const threshold = getCancelThreshold();
+      card.querySelector(`[data-cancel="${o.id}"]`).addEventListener("click", async ()=>{
+        const updated = await cancelOrder(o.id, "student");
+        await recordCancellation(o.pid);
+        const cancels = await getRecentCancellationCount(o.pid, 24);
+        const threshold = await getCancelThreshold();
         if (cancels >= threshold) {
-          setStudentBlocked(o.pid, true, `Auto-blocked due to ${cancels} cancellations in last 24h`);
+          await setStudentBlocked(o.pid, true, `Auto-blocked due to ${cancels} cancellations in last 24h`);
         }
-        renderOrdersList(o.pid);
+        await renderOrdersList(o.pid);
       });
     }
   }

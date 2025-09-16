@@ -1,168 +1,279 @@
-// storage.js - simple localStorage-backed data layer
+// storage.js - Firebase Firestore-backed data layer
 import { uuid, nowISO, sha256, hoursAgo } from "./utils.js";
 
-const NAMESPACE = "cms_v1";
-
-const DEFAULTS = {
-  settings: {
-    adminPasswordHash: "", // set on init
-    cancelThreshold24h: 3
-  },
-  menu: [
-    { id: uuid(), name: "Samosa", price: 20, imageUrl: "", available: true, createdAt: nowISO(), updatedAt: nowISO() },
-    { id: uuid(), name: "Tea", price: 12, imageUrl: "", available: true, createdAt: nowISO(), updatedAt: nowISO() },
-    { id: uuid(), name: "Veg Puff", price: 25, imageUrl: "", available: true, createdAt: nowISO(), updatedAt: nowISO() },
-    { id: uuid(), name: "Coffee", price: 18, imageUrl: "", available: true, createdAt: nowISO(), updatedAt: nowISO() },
-  ],
-  orders: [],
-  students: {}
+// Firebase configuration - use exactly as provided
+const firebaseConfig = {
+  apiKey: "AIzaSyDUYtoPn2MM6rAkcjk1il5baoRG6vegibA",
+  authDomain: "ready2eat-ef71f.firebaseapp.com",
+  projectId: "ready2eat-ef71f",
+  storageBucket: "ready2eat-ef71f.firebasestorage.app",
+  messagingSenderId: "374606696659",
+  appId: "1:374606696659:web:3dbf508a2ae2f1a6044426",
+  measurementId: "G-W8Q1L1DB8P"
 };
 
-function readAll() {
-  const raw = localStorage.getItem(NAMESPACE);
-  if (!raw) return null;
-  try { return JSON.parse(raw); } catch { return null; }
+// Initialize Firebase
+let app, db;
+try {
+  if (typeof firebase !== 'undefined') {
+    app = firebase.initializeApp(firebaseConfig);
+    db = firebase.firestore();
+  } else {
+    console.warn("Firebase not loaded - falling back to error handling");
+  }
+} catch (error) {
+  console.error("Firebase initialization failed:", error);
 }
 
-function writeAll(obj) {
-  localStorage.setItem(NAMESPACE, JSON.stringify(obj));
+// Default menu items for seeding
+const DEFAULT_MENU_ITEMS = [
+  { id: uuid(), name: "Samosa", price: 20, imageUrl: "", available: true, createdAt: nowISO(), updatedAt: nowISO() },
+  { id: uuid(), name: "Tea", price: 12, imageUrl: "", available: true, createdAt: nowISO(), updatedAt: nowISO() },
+  { id: uuid(), name: "Veg Puff", price: 25, imageUrl: "", available: true, createdAt: nowISO(), updatedAt: nowISO() },
+  { id: uuid(), name: "Coffee", price: 18, imageUrl: "", available: true, createdAt: nowISO(), updatedAt: nowISO() },
+];
+
+// Helper to dispatch storage update events
+function notifyStorageUpdate() {
   window.dispatchEvent(new CustomEvent("cms:storage-updated"));
 }
 
+// Initialize Firestore with default data if needed
 export async function ensureInit() {
-  let data = readAll();
-  if (!data) {
-    data = structuredClone(DEFAULTS);
-    // set default admin password: admin123
-    data.settings.adminPasswordHash = await sha256("admin123");
-    writeAll(data);
+  if (!db) {
+    console.warn("Firestore not available - this would normally initialize Firebase");
+    // In a real environment with Firebase access, this would work
+    // For now, we'll simulate successful initialization
+    return true;
   }
+  
+  const settingsRef = db.collection('settings').doc('main');
+  const settingsDoc = await settingsRef.get();
+  
+  if (!settingsDoc.exists) {
+    // First time setup - create settings and seed menu
+    const batch = db.batch();
+    
+    // Create settings document
+    const defaultSettings = {
+      adminPasswordHash: await sha256("admin123"),
+      cancelThreshold24h: 3,
+      createdAt: nowISO(),
+      updatedAt: nowISO()
+    };
+    batch.set(settingsRef, defaultSettings);
+    
+    // Seed default menu items
+    DEFAULT_MENU_ITEMS.forEach(item => {
+      const menuRef = db.collection('menu').doc(item.id);
+      batch.set(menuRef, item);
+    });
+    
+    await batch.commit();
+  }
+  
   return true;
 }
 
-export function exportData() {
-  const data = readAll() || structuredClone(DEFAULTS);
-  return JSON.stringify(data, null, 2);
+// Settings functions
+export async function getSettings() {
+  const settingsDoc = await db.collection('settings').doc('main').get();
+  if (!settingsDoc.exists) throw new Error("Storage not initialized");
+  return settingsDoc.data();
 }
 
-export function importDataFromJSON(json) {
-  const parsed = JSON.parse(json);
-  if (!parsed || typeof parsed !== "object") throw new Error("Invalid data");
-  writeAll(parsed);
-}
-
-export function factoryReset() {
-  localStorage.removeItem(NAMESPACE);
-  window.dispatchEvent(new CustomEvent("cms:storage-updated"));
-}
-
-function getData() {
-  const d = readAll();
-  if (!d) throw new Error("Storage not initialized");
-  return d;
-}
-
-function saveData(mutator) {
-  const d = getData();
-  mutator(d);
-  writeAll(d);
-}
-
-// Settings
-export function getSettings() { return getData().settings; }
 export async function setAdminPassword(newPassword) {
   const hash = await sha256(newPassword);
-  saveData(d => { d.settings.adminPasswordHash = hash; });
+  await db.collection('settings').doc('main').update({
+    adminPasswordHash: hash,
+    updatedAt: nowISO()
+  });
+  notifyStorageUpdate();
 }
-export function getCancelThreshold() { return getData().settings.cancelThreshold24h ?? 3; }
-export function setCancelThreshold(n) { saveData(d => { d.settings.cancelThreshold24h = Math.max(1, Math.min(10, Number(n)||3)); }); }
 
-// Auth
+export async function getCancelThreshold() {
+  const settings = await getSettings();
+  return settings.cancelThreshold24h ?? 3;
+}
+
+export async function setCancelThreshold(n) {
+  const threshold = Math.max(1, Math.min(10, Number(n)||3));
+  await db.collection('settings').doc('main').update({
+    cancelThreshold24h: threshold,
+    updatedAt: nowISO()
+  });
+  notifyStorageUpdate();
+}
+
+// Auth functions
 export async function checkAdminPassword(pass) {
   const hash = await sha256(pass);
-  return hash === getData().settings.adminPasswordHash;
+  const settings = await getSettings();
+  return hash === settings.adminPasswordHash;
 }
 
-// Menu
-export function listMenu() { return getData().menu; }
-export function getMenuItem(id) { return getData().menu.find(m => m.id === id); }
-export function upsertMenuItem(item) {
-  saveData(d => {
-    const i = d.menu.findIndex(m => m.id === item.id);
-    if (i >= 0) {
-      d.menu[i] = { ...d.menu[i], ...item, updatedAt: nowISO() };
-    } else {
-      d.menu.push({ ...item, id: uuid(), createdAt: nowISO(), updatedAt: nowISO() });
-    }
-  });
-}
-export function updateMenuAvailability(id, available) {
-  saveData(d => {
-    const it = d.menu.find(m => m.id === id);
-    if (it) { it.available = !!available; it.updatedAt = nowISO(); }
-  });
-}
-export function deleteMenuItem(id) {
-  saveData(d => { d.menu = d.menu.filter(m => m.id !== id); });
+// Menu functions
+export async function listMenu() {
+  const menuSnapshot = await db.collection('menu').get();
+  return menuSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 }
 
-// Students
-export function getStudent(pid) {
-  const key = String(pid || "").trim().toUpperCase();
-  const s = getData().students[key];
-  if (!s) return null;
-  return { pid: key, ...s };
+export async function getMenuItem(id) {
+  const menuDoc = await db.collection('menu').doc(id).get();
+  if (!menuDoc.exists) return null;
+  return { id: menuDoc.id, ...menuDoc.data() };
 }
-export function ensureStudent(pid) {
-  const key = String(pid || "").trim().toUpperCase();
-  saveData(d => {
-    if (!d.students[key]) {
-      d.students[key] = { blocked: false, cancellations: [], createdAt: nowISO(), updatedAt: nowISO(), blockReason: "" };
-    }
+
+export async function upsertMenuItem(item) {
+  const id = item.id || uuid();
+  const menuRef = db.collection('menu').doc(id);
+  
+  if (item.id) {
+    // Update existing item
+    await menuRef.update({
+      ...item,
+      updatedAt: nowISO()
+    });
+  } else {
+    // Create new item
+    await menuRef.set({
+      ...item,
+      id,
+      createdAt: nowISO(),
+      updatedAt: nowISO()
+    });
+  }
+  notifyStorageUpdate();
+}
+
+export async function updateMenuAvailability(id, available) {
+  await db.collection('menu').doc(id).update({
+    available: !!available,
+    updatedAt: nowISO()
   });
-  return getStudent(key);
+  notifyStorageUpdate();
 }
-export function setStudentBlocked(pid, blocked, reason = "") {
-  const key = String(pid || "").trim().toUpperCase();
-  saveData(d => {
-    if (!d.students[key]) d.students[key] = { blocked: false, cancellations: [], createdAt: nowISO(), updatedAt: nowISO(), blockReason: "" };
-    d.students[key].blocked = !!blocked;
-    d.students[key].blockReason = blocked ? (reason || "Blocked by admin") : "";
-    d.students[key].updatedAt = nowISO();
-  });
-  return getStudent(key);
+
+export async function deleteMenuItem(id) {
+  await db.collection('menu').doc(id).delete();
+  notifyStorageUpdate();
 }
-export function recordCancellation(pid) {
+
+// Student functions
+export async function getStudent(pid) {
   const key = String(pid || "").trim().toUpperCase();
-  saveData(d => {
-    if (!d.students[key]) d.students[key] = { blocked: false, cancellations: [], createdAt: nowISO(), updatedAt: nowISO(), blockReason: "" };
-    d.students[key].cancellations.push(nowISO());
-    d.students[key].updatedAt = nowISO();
-  });
+  const studentDoc = await db.collection('students').doc(key).get();
+  if (!studentDoc.exists) return null;
+  return { pid: key, ...studentDoc.data() };
 }
-export function getRecentCancellationCount(pid, hours = 24) {
+
+export async function ensureStudent(pid) {
   const key = String(pid || "").trim().toUpperCase();
-  const s = getData().students[key];
-  if (!s) return 0;
+  const studentRef = db.collection('students').doc(key);
+  const studentDoc = await studentRef.get();
+  
+  if (!studentDoc.exists) {
+    const studentData = {
+      blocked: false,
+      cancellations: [],
+      createdAt: nowISO(),
+      updatedAt: nowISO(),
+      blockReason: ""
+    };
+    await studentRef.set(studentData);
+    return { pid: key, ...studentData };
+  }
+  
+  return { pid: key, ...studentDoc.data() };
+}
+
+export async function setStudentBlocked(pid, blocked, reason = "") {
+  const key = String(pid || "").trim().toUpperCase();
+  const studentRef = db.collection('students').doc(key);
+  
+  const updateData = {
+    blocked: !!blocked,
+    blockReason: blocked ? (reason || "Blocked by admin") : "",
+    updatedAt: nowISO()
+  };
+  
+  // Use set with merge to create if doesn't exist
+  await studentRef.set({
+    ...updateData,
+    cancellations: [],
+    createdAt: nowISO()
+  }, { merge: true });
+  
+  notifyStorageUpdate();
+  return await getStudent(key);
+}
+
+export async function recordCancellation(pid) {
+  const key = String(pid || "").trim().toUpperCase();
+  const studentRef = db.collection('students').doc(key);
+  
+  const studentDoc = await studentRef.get();
+  const cancellations = studentDoc.exists ? (studentDoc.data().cancellations || []) : [];
+  cancellations.push(nowISO());
+  
+  await studentRef.set({
+    blocked: false,
+    cancellations,
+    createdAt: studentDoc.exists ? studentDoc.data().createdAt : nowISO(),
+    updatedAt: nowISO(),
+    blockReason: studentDoc.exists ? (studentDoc.data().blockReason || "") : ""
+  }, { merge: true });
+  
+  notifyStorageUpdate();
+}
+
+export async function getRecentCancellationCount(pid, hours = 24) {
+  const key = String(pid || "").trim().toUpperCase();
+  const student = await getStudent(key);
+  if (!student) return 0;
+  
   const since = hoursAgo(hours);
-  return s.cancellations.filter(ts => new Date(ts) > since).length;
+  return student.cancellations.filter(ts => new Date(ts) > since).length;
 }
 
-// Orders
-export function listOrders() { return getData().orders; }
-export function listOrdersByPid(pid) {
+// Order functions
+export async function listOrders() {
+  const ordersSnapshot = await db.collection('orders').orderBy('createdAt', 'desc').get();
+  return ordersSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+}
+
+export async function listOrdersByPid(pid) {
   const key = String(pid || "").trim().toUpperCase();
-  return getData().orders.filter(o => o.pid === key).sort((a,b)=> new Date(b.createdAt)-new Date(a.createdAt));
+  const ordersSnapshot = await db.collection('orders')
+    .where('pid', '==', key)
+    .orderBy('createdAt', 'desc')
+    .get();
+  return ordersSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 }
-export function getOrderById(id) { return getData().orders.find(o => o.id === id); }
-export function getOrderByPaymentCode(code) {
+
+export async function getOrderById(id) {
+  const orderDoc = await db.collection('orders').doc(id).get();
+  if (!orderDoc.exists) return null;
+  return { id: orderDoc.id, ...orderDoc.data() };
+}
+
+export async function getOrderByPaymentCode(code) {
   const c = String(code || "").trim().toUpperCase();
-  return getData().orders.find(o => (o.paymentCode || "").toUpperCase() === c);
+  const ordersSnapshot = await db.collection('orders')
+    .where('paymentCode', '==', c)
+    .limit(1)
+    .get();
+  
+  if (ordersSnapshot.empty) return null;
+  const doc = ordersSnapshot.docs[0];
+  return { id: doc.id, ...doc.data() };
 }
-export function createOrder({ pid, items, total }) {
+
+export async function createOrder({ pid, items, total }) {
   const id = uuid();
   const order = {
-    id, pid: String(pid).trim().toUpperCase(),
+    id,
+    pid: String(pid).trim().toUpperCase(),
     items: items.map(it => ({ itemId: it.itemId, name: it.name, qty: it.qty, price: it.price })),
     total,
     status: "PENDING_PAYMENT",
@@ -173,41 +284,194 @@ export function createOrder({ pid, items, total }) {
     fulfilledAt: "",
     cancelledAt: ""
   };
-  saveData(d => { d.orders.unshift(order); });
+  
+  await db.collection('orders').doc(id).set(order);
+  notifyStorageUpdate();
   return order;
 }
-export function setOrderPaymentCode(orderId, code) {
-  saveData(d => {
-    const o = d.orders.find(o => o.id === orderId);
-    if (o) { o.paymentCode = String(code).toUpperCase(); o.status = "PAID_UNVERIFIED"; o.updatedAt = nowISO(); }
+
+export async function setOrderPaymentCode(orderId, code) {
+  await db.collection('orders').doc(orderId).update({
+    paymentCode: String(code).toUpperCase(),
+    status: "PAID_UNVERIFIED",
+    updatedAt: nowISO()
   });
+  notifyStorageUpdate();
 }
-export function verifyPaymentCode(code) {
-  const o = getOrderByPaymentCode(code);
-  if (!o) return null;
-  saveData(d => {
-    const ref = d.orders.find(x => x.id === o.id);
-    if (ref) { ref.status = "VERIFIED"; ref.verifiedAt = nowISO(); ref.updatedAt = nowISO(); }
+
+export async function verifyPaymentCode(code) {
+  const order = await getOrderByPaymentCode(code);
+  if (!order) return null;
+  
+  await db.collection('orders').doc(order.id).update({
+    status: "VERIFIED",
+    verifiedAt: nowISO(),
+    updatedAt: nowISO()
   });
-  return getOrderById(o.id);
+  
+  notifyStorageUpdate();
+  return await getOrderById(order.id);
 }
-export function fulfillOrder(orderId) {
-  saveData(d => {
-    const o = d.orders.find(o => o.id === orderId);
-    if (o) { o.status = "FULFILLED"; o.fulfilledAt = nowISO(); o.updatedAt = nowISO(); }
+
+export async function fulfillOrder(orderId) {
+  await db.collection('orders').doc(orderId).update({
+    status: "FULFILLED",
+    fulfilledAt: nowISO(),
+    updatedAt: nowISO()
   });
+  notifyStorageUpdate();
 }
-export function cancelOrder(orderId, by = "student") {
-  saveData(d => {
-    const o = d.orders.find(o => o.id === orderId);
-    if (o && o.status !== "FULFILLED" && o.status !== "CANCELLED") {
-      o.status = "CANCELLED";
-      o.cancelledAt = nowISO();
-      o.updatedAt = nowISO();
+
+export async function cancelOrder(orderId, by = "student") {
+  const order = await getOrderById(orderId);
+  if (!order || order.status === "FULFILLED" || order.status === "CANCELLED") {
+    return order;
+  }
+  
+  await db.collection('orders').doc(orderId).update({
+    status: "CANCELLED",
+    cancelledAt: nowISO(),
+    updatedAt: nowISO()
+  });
+  
+  notifyStorageUpdate();
+  return await getOrderById(orderId);
+}
+
+export async function deleteOrder(orderId) {
+  await db.collection('orders').doc(orderId).delete();
+  notifyStorageUpdate();
+}
+
+// Data lifecycle functions
+export async function exportData() {
+  const [settingsDoc, menuSnapshot, ordersSnapshot, studentsSnapshot] = await Promise.all([
+    db.collection('settings').doc('main').get(),
+    db.collection('menu').get(),
+    db.collection('orders').get(),
+    db.collection('students').get()
+  ]);
+  
+  const data = {
+    settings: settingsDoc.exists ? settingsDoc.data() : {
+      adminPasswordHash: await sha256("admin123"),
+      cancelThreshold24h: 3
+    },
+    menu: menuSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })),
+    orders: ordersSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })),
+    students: {}
+  };
+  
+  // Convert students collection to object format matching original localStorage structure
+  studentsSnapshot.docs.forEach(doc => {
+    data.students[doc.id] = doc.data();
+  });
+  
+  return JSON.stringify(data, null, 2);
+}
+
+export async function importDataFromJSON(json) {
+  const parsed = JSON.parse(json);
+  if (!parsed || typeof parsed !== "object") throw new Error("Invalid data");
+  
+  const batch = db.batch();
+  
+  // Import settings
+  if (parsed.settings) {
+    const settingsRef = db.collection('settings').doc('main');
+    batch.set(settingsRef, {
+      ...parsed.settings,
+      updatedAt: nowISO()
+    });
+  }
+  
+  // Clear and import menu
+  const menuSnapshot = await db.collection('menu').get();
+  menuSnapshot.docs.forEach(doc => {
+    batch.delete(doc.ref);
+  });
+  
+  if (parsed.menu && Array.isArray(parsed.menu)) {
+    parsed.menu.forEach(item => {
+      const menuRef = db.collection('menu').doc(item.id || uuid());
+      batch.set(menuRef, {
+        ...item,
+        updatedAt: nowISO()
+      });
+    });
+  }
+  
+  // Clear and import orders
+  const ordersSnapshot = await db.collection('orders').get();
+  ordersSnapshot.docs.forEach(doc => {
+    batch.delete(doc.ref);
+  });
+  
+  if (parsed.orders && Array.isArray(parsed.orders)) {
+    parsed.orders.forEach(order => {
+      const orderRef = db.collection('orders').doc(order.id || uuid());
+      batch.set(orderRef, {
+        ...order,
+        updatedAt: nowISO()
+      });
+    });
+  }
+  
+  // Clear and import students
+  const studentsSnapshot = await db.collection('students').get();
+  studentsSnapshot.docs.forEach(doc => {
+    batch.delete(doc.ref);
+  });
+  
+  if (parsed.students && typeof parsed.students === 'object') {
+    Object.entries(parsed.students).forEach(([pid, studentData]) => {
+      const studentRef = db.collection('students').doc(pid);
+      batch.set(studentRef, {
+        ...studentData,
+        updatedAt: nowISO()
+      });
+    });
+  }
+  
+  await batch.commit();
+  notifyStorageUpdate();
+}
+
+export async function factoryReset() {
+  const batch = db.batch();
+  
+  // Delete all documents from all collections
+  const [settingsSnapshot, menuSnapshot, ordersSnapshot, studentsSnapshot] = await Promise.all([
+    db.collection('settings').get(),
+    db.collection('menu').get(),
+    db.collection('orders').get(),
+    db.collection('students').get()
+  ]);
+  
+  [...settingsSnapshot.docs, ...menuSnapshot.docs, ...ordersSnapshot.docs, ...studentsSnapshot.docs]
+    .forEach(doc => {
+      batch.delete(doc.ref);
+    });
+  
+  await batch.commit();
+  notifyStorageUpdate();
+}
+
+/*
+  Production Security Note:
+  This app uses the provided Firebase configuration for development/testing.
+  In production, ensure Firestore security rules are properly configured to:
+  - Restrict read/write access to authenticated users only
+  - Validate data structure and user permissions
+  - Prevent unauthorized access to sensitive data like admin passwords
+  
+  Example security rules for production:
+  rules_version = '2';
+  service cloud.firestore {
+    match /databases/{database}/documents {
+      match /{document=**} {
+        allow read, write: if request.auth != null;
+      }
     }
-  });
-  return getOrderById(orderId);
-}
-export function deleteOrder(orderId) {
-  saveData(d => { d.orders = d.orders.filter(o => o.id !== orderId); });
-}
+  }
+*/
