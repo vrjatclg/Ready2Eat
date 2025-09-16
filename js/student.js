@@ -1,8 +1,9 @@
 // student.js
 import {
   ensureInit, listMenu, getStudent, ensureStudent, getRecentCancellationCount, getCancelThreshold,
-  createOrder, setOrderPaymentCode, listOrdersByPid, cancelOrder, recordCancellation, setStudentBlocked
-} from "./storage.js";
+  createOrder, setOrderPaymentCode, listOrdersByPid, cancelOrder, recordCancellation, setStudentBlocked,
+  getCart, setCart, clearCart
+} from "./storage.firestore.js";
 import { debounce, money, generatePaymentCode } from "./utils.js";
 
 const menuGrid = document.getElementById("menuGrid");
@@ -37,13 +38,18 @@ const studentNotice = document.getElementById("studentNotice");
 
 let cart = []; // [{itemId,name,price,qty,imageUrl}]
 let menu = [];
+let currentPid = null; // Track the current PID for cart operations
 
 async function init() {
   await ensureInit();
-  menu = listMenu();
+  menu = await listMenu();
   renderMenu();
-  restoreCart();
+  // Don't restore cart automatically - require PID first
+  updateCartBadge(); 
   bindEvents();
+  
+  // Show PID input dialog immediately if no PID is set
+  showPidInputDialog();
 }
 init();
 
@@ -66,14 +72,14 @@ function bindEvents(){
   });
 
   viewOrdersBtn.addEventListener("click", ()=>{
-    ordersPidInput.value = localStorage.getItem("cms_last_pid") || "";
+    ordersPidInput.value = currentPid || "";
     ordersList.innerHTML = "";
     ordersDialog.showModal();
   });
   ordersForm.addEventListener("submit", onViewOrdersSubmit);
 
-  window.addEventListener("cms:storage-updated", ()=> {
-    menu = listMenu();
+  window.addEventListener("cms:storage-updated", async ()=> {
+    menu = await listMenu();
     renderMenu();
   });
 }
@@ -116,6 +122,11 @@ function renderMenu(){
 }
 
 function addToCart(item){
+  if (!currentPid) {
+    showPidInputDialog();
+    return;
+  }
+  
   const idx = cart.findIndex(c => c.itemId === item.itemId);
   if (idx >= 0) cart[idx].qty += item.qty;
   else cart.push(item);
@@ -125,11 +136,24 @@ function addToCart(item){
   renderCart();
 }
 
-function persistCart(){
-  localStorage.setItem("cms_cart", JSON.stringify(cart));
+async function persistCart(){
+  if (!currentPid) return;
+  await setCart(currentPid, cart);
 }
-function restoreCart(){
-  try { cart = JSON.parse(localStorage.getItem("cms_cart")||"[]") || []; } catch { cart = []; }
+
+async function restoreCart(){
+  if (!currentPid) {
+    cart = [];
+    updateCartBadge();
+    renderCart();
+    return;
+  }
+  
+  try { 
+    cart = await getCart(currentPid) || []; 
+  } catch { 
+    cart = []; 
+  }
   updateCartBadge();
   renderCart();
 }
@@ -167,16 +191,16 @@ function renderCart(){
       </div>
     `;
     cartItemsEl.appendChild(row);
-    row.querySelector(`#cartqty-${it.itemId}`).addEventListener("change", e=>{
+    row.querySelector(`#cartqty-${it.itemId}`).addEventListener("change", async e=>{
       const val = Math.max(1, parseInt(e.target.value || "1", 10));
       it.qty = val;
-      persistCart();
+      await persistCart();
       updateCartBadge();
       renderCart();
     });
-    row.querySelector(`[data-remove="${it.itemId}"]`).addEventListener("click", ()=>{
+    row.querySelector(`[data-remove="${it.itemId}"]`).addEventListener("click", async ()=>{
       cart = cart.filter(c => c.itemId !== it.itemId);
-      persistCart();
+      await persistCart();
       updateCartBadge();
       renderCart();
     });
@@ -191,9 +215,14 @@ function openDrawer(open){
 
 async function onCheckout(){
   if (cart.length === 0) return;
-  // Prompt for PID
+  if (!currentPid) {
+    showPidInputDialog();
+    return;
+  }
+  
+  // Prompt for PID confirmation
   pidWarnings.textContent = "";
-  pidInput.value = localStorage.getItem("cms_last_pid") || "";
+  pidInput.value = currentPid;
   await ensureInit();
   pidDialog.showModal();
 }
@@ -209,54 +238,67 @@ async function onConfirmPid(e){
   e.preventDefault();
   const pid = (pidInput.value || "").trim().toUpperCase();
   if (pid.length < 3) { pidWarnings.textContent = "Please enter a valid PID"; return; }
-  localStorage.setItem("cms_last_pid", pid);
-
-  const student = ensureStudent(pid);
+  
+  // Set current PID and ensure student exists
+  currentPid = pid;
+  const student = await ensureStudent(pid);
+  
   if (student.blocked) {
     setNotice(`Your account (PID ${pid}) is blocked. Reason: ${student.blockReason || "Policy violation"}`, "error");
     pidDialog.close();
     return;
   }
-  const recent = getRecentCancellationCount(pid, 24);
-  const threshold = getCancelThreshold();
+  
+  const recent = await getRecentCancellationCount(pid, 24);
+  const threshold = await getCancelThreshold();
   if (recent >= threshold - 1) {
     pidWarnings.textContent = `Warning: You have ${recent} cancellations in the last 24h. ${threshold - recent} more will result in an automatic block.`;
   } else pidWarnings.textContent = "";
 
-  // Create order
-  const items = cart.map(c => ({ itemId: c.itemId, name: c.name, qty: c.qty, price: c.price }));
-  const total = cart.reduce((n,c)=> n + c.qty*c.price, 0);
-  const order = createOrder({ pid, items, total });
+  // Load cart for this PID
+  await restoreCart();
+  
+  // If this was called from checkout and cart has items, create order
+  if (cart.length > 0) {
+    // Create order
+    const items = cart.map(c => ({ itemId: c.itemId, name: c.name, qty: c.qty, price: c.price }));
+    const total = cart.reduce((n,c)=> n + c.qty*c.price, 0);
+    const order = await createOrder({ pid, items, total });
 
-  // Show payment flow
-  paymentTotalEl.textContent = money(total);
-  paymentCodeBlock.hidden = true;
-  paymentCodeText.textContent = "";
-  paymentDialog.showModal();
-  // store current pending order id in memory
-  pidDialog.close();
-  currentPendingOrderId = order.id;
+    // Show payment flow
+    paymentTotalEl.textContent = money(total);
+    paymentCodeBlock.hidden = true;
+    paymentCodeText.textContent = "";
+    paymentDialog.showModal();
+    // store current pending order id in memory
+    pidDialog.close();
+    currentPendingOrderId = order.id;
+  } else {
+    // Just setting PID, close dialog
+    pidDialog.close();
+    setNotice(`Logged in as PID ${pid}`, "success");
+  }
 }
 
 let currentPendingOrderId = null;
 
 async function onGeneratePaymentCode(){
-  if (!currentPendingOrderId) return;
-  const orders = listOrdersByPid(localStorage.getItem("cms_last_pid") || "");
+  if (!currentPendingOrderId || !currentPid) return;
+  const orders = await listOrdersByPid(currentPid);
   const existingCodes = new Set(orders.map(o => (o.paymentCode||"").toUpperCase()).filter(Boolean));
   const code = generatePaymentCode(existingCodes);
-  setOrderPaymentCode(currentPendingOrderId, code);
+  await setOrderPaymentCode(currentPendingOrderId, code);
   paymentCodeText.textContent = code;
   paymentCodeBlock.hidden = false;
   // Clear cart after payment code generation to prevent duplicates
   cart = [];
-  persistCart();
+  await clearCart(currentPid);
   updateCartBadge();
   renderCart();
 }
 
-function renderOrdersList(pid){
-  const orders = listOrdersByPid(pid);
+async function renderOrdersList(pid){
+  const orders = await listOrdersByPid(pid);
   if (orders.length === 0) {
     ordersList.innerHTML = `<div class="muted small">No orders found for PID ${pid}.</div>`;
     return;
@@ -284,13 +326,13 @@ function renderOrdersList(pid){
     `;
     ordersList.appendChild(card);
     if (canCancel) {
-      card.querySelector(`[data-cancel="${o.id}"]`).addEventListener("click", ()=>{
-        const updated = cancelOrder(o.id, "student");
-        recordCancellation(o.pid);
-        const cancels = getRecentCancellationCount(o.pid, 24);
-        const threshold = getCancelThreshold();
+      card.querySelector(`[data-cancel="${o.id}"]`).addEventListener("click", async ()=>{
+        const updated = await cancelOrder(o.id, "student");
+        await recordCancellation(o.pid);
+        const cancels = await getRecentCancellationCount(o.pid, 24);
+        const threshold = await getCancelThreshold();
         if (cancels >= threshold) {
-          setStudentBlocked(o.pid, true, `Auto-blocked due to ${cancels} cancellations in last 24h`);
+          await setStudentBlocked(o.pid, true, `Auto-blocked due to ${cancels} cancellations in last 24h`);
         }
         renderOrdersList(o.pid);
       });
@@ -302,6 +344,13 @@ function onViewOrdersSubmit(e){
   e.preventDefault();
   const pid = (ordersPidInput.value || "").trim().toUpperCase();
   if (!pid) return;
-  localStorage.setItem("cms_last_pid", pid);
+  currentPid = pid;
   renderOrdersList(pid);
+}
+
+// New function to show PID input dialog for initial login
+function showPidInputDialog() {
+  pidWarnings.textContent = "";
+  pidInput.value = "";
+  pidDialog.showModal();
 }

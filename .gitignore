@@ -1,0 +1,17 @@
+# Firebase configuration (contains sensitive data - template version is included)
+# js/firebase-init.js
+
+# Node modules (if any)
+node_modules/
+
+# Build artifacts  
+dist/
+build/
+
+# IDE files
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
