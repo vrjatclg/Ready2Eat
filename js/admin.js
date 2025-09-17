@@ -3,8 +3,8 @@ import {
   ensureInit, checkAdminPassword, listOrders, verifyPaymentCode, fulfillOrder, deleteOrder, cancelOrder,
   listMenu, upsertMenuItem, updateMenuAvailability, deleteMenuItem,
   getStudent, setStudentBlocked, getCancelThreshold, setCancelThreshold,
-  exportData, importDataFromJSON, factoryReset, setAdminPassword
-} from "./storage.js";
+  setAdminPassword
+} from "./storage.firestore.js";
 import { money, debounce } from "./utils.js";
 
 const loginView = document.getElementById("loginView");
@@ -54,7 +54,7 @@ let isAuthed = false;
 
 async function init(){
   await ensureInit();
-  updateCancelThresholdUI();
+  await updateCancelThresholdUI();
   bindEvents();
 }
 init();
@@ -63,40 +63,49 @@ function bindEvents(){
   loginBtn.addEventListener("click", onLogin);
   logoutBtn.addEventListener("click", onLogout);
 
-  refreshOrders.addEventListener("click", renderOrders);
-  orderSearch.addEventListener("input", debounce(renderOrders, 200));
-  statusFilter.addEventListener("change", renderOrders);
+  refreshOrders.addEventListener("click", () => renderOrders());
+  orderSearch.addEventListener("input", debounce(() => renderOrders(), 200));
+  statusFilter.addEventListener("change", () => renderOrders());
 
-  verifyCodeBtn.addEventListener("click", onVerifyCode);
+  verifyCodeBtn.addEventListener("click", () => onVerifyCode());
 
-  checkStudentBtn.addEventListener("click", onCheckStudent);
+  checkStudentBtn.addEventListener("click", () => onCheckStudent());
   blockStudentBtn.addEventListener("click", ()=> onBlockToggle(true));
   unblockStudentBtn.addEventListener("click", ()=> onBlockToggle(false));
 
   addMenuItemBtn.addEventListener("click", ()=> openMenuModal());
   menuCancelBtn.addEventListener("click", ()=> menuModal.close());
-  menuForm.addEventListener("submit", onMenuSave);
+  menuForm.addEventListener("submit", (e) => onMenuSave(e));
 
-  changePasswordBtn.addEventListener("click", onChangePassword);
-  incThreshold.addEventListener("click", ()=> { setCancelThreshold(getCancelThreshold()+1); updateCancelThresholdUI(); });
-  decThreshold.addEventListener("click", ()=> { setCancelThreshold(getCancelThreshold()-1); updateCancelThresholdUI(); });
+  changePasswordBtn.addEventListener("click", () => onChangePassword());
+  incThreshold.addEventListener("click", async ()=> { 
+    const current = await getCancelThreshold();
+    await setCancelThreshold(current + 1); 
+    await updateCancelThresholdUI(); 
+  });
+  decThreshold.addEventListener("click", async ()=> { 
+    const current = await getCancelThreshold();
+    await setCancelThreshold(current - 1); 
+    await updateCancelThresholdUI(); 
+  });
 
   exportDataBtn.addEventListener("click", onExport);
   importDataBtn.addEventListener("click", ()=> importFile.click());
   importFile.addEventListener("change", onImportFile);
   resetDataBtn.addEventListener("click", onReset);
 
-  window.addEventListener("cms:storage-updated", ()=>{
+  window.addEventListener("cms:storage-updated", async ()=>{
     if (isAuthed) {
-      renderOrders();
-      renderMenu();
+      await renderOrders();
+      await renderMenu();
     }
-    updateCancelThresholdUI();
+    await updateCancelThresholdUI();
   });
 }
 
-function updateCancelThresholdUI(){
-  cancelThresholdDisplay.textContent = getCancelThreshold();
+async function updateCancelThresholdUI(){
+  const threshold = await getCancelThreshold();
+  cancelThresholdDisplay.textContent = threshold;
 }
 
 async function onLogin(){
@@ -110,8 +119,8 @@ async function onLogin(){
   loginError.hidden = true;
   loginView.hidden = true;
   adminApp.hidden = false;
-  renderOrders();
-  renderMenu();
+  await renderOrders();
+  await renderMenu();
 }
 function onLogout(){
   isAuthed = false;
@@ -120,10 +129,11 @@ function onLogout(){
   adminApp.hidden = true;
 }
 
-function renderOrders(){
+async function renderOrders(){
   const q = (orderSearch.value || "").trim().toUpperCase();
   const status = (statusFilter.value || "").trim().toUpperCase();
-  const orders = listOrders()
+  const allOrders = await listOrders();
+  const orders = allOrders
     .filter(o => (!status || o.status === status))
     .filter(o => {
       if (!q) return true;
@@ -166,30 +176,39 @@ function renderOrders(){
   ordersTable.appendChild(table);
 
   ordersTable.querySelectorAll("[data-verify]").forEach(btn=>{
-    btn.addEventListener("click", ()=> {
+    btn.addEventListener("click", async ()=> {
       const code = btn.getAttribute("data-verify");
-      const updated = verifyPaymentCode(code);
+      const updated = await verifyPaymentCode(code);
       verifyResult.textContent = updated ? `Verified code for order #${updated.id.slice(0,8)}` : "Code not found";
       verifyResult.className = updated ? "success small" : "error small";
-      renderOrders();
+      await renderOrders();
     });
   });
   ordersTable.querySelectorAll("[data-fulfill]").forEach(btn=>{
-    btn.addEventListener("click", ()=> { fulfillOrder(btn.getAttribute("data-fulfill")); renderOrders(); });
+    btn.addEventListener("click", async ()=> { 
+      await fulfillOrder(btn.getAttribute("data-fulfill")); 
+      await renderOrders(); 
+    });
   });
   ordersTable.querySelectorAll("[data-cancel]").forEach(btn=>{
-    btn.addEventListener("click", ()=> { cancelOrder(btn.getAttribute("data-cancel"), "admin"); renderOrders(); });
+    btn.addEventListener("click", async ()=> { 
+      await cancelOrder(btn.getAttribute("data-cancel"), "admin"); 
+      await renderOrders(); 
+    });
   });
   ordersTable.querySelectorAll("[data-delete]").forEach(btn=>{
-    btn.addEventListener("click", ()=> {
+    btn.addEventListener("click", async ()=> {
       const id = btn.getAttribute("data-delete");
-      if (confirm("Delete this order permanently?")) { deleteOrder(id); renderOrders(); }
+      if (confirm("Delete this order permanently?")) { 
+        await deleteOrder(id); 
+        await renderOrders(); 
+      }
     });
   });
 }
 
-function renderMenu(){
-  const items = listMenu();
+async function renderMenu(){
+  const items = await listMenu();
   const table = document.createElement("table");
   table.innerHTML = `
     <thead><tr><th>Item</th><th>Price</th><th>Available</th><th>Actions</th></tr></thead>
@@ -212,44 +231,46 @@ function renderMenu(){
   menuTable.appendChild(table);
 
   menuTable.querySelectorAll("[data-edit]").forEach(btn=>{
-    btn.addEventListener("click", ()=>{
+    btn.addEventListener("click", async ()=>{
       const id = btn.getAttribute("data-edit");
-      const item = listMenu().find(x => x.id === id);
+      const items = await listMenu();
+      const item = items.find(x => x.id === id);
       openMenuModal(item);
     });
   });
   menuTable.querySelectorAll("[data-toggle]").forEach(btn=>{
-    btn.addEventListener("click", ()=>{
+    btn.addEventListener("click", async ()=>{
       const id = btn.getAttribute("data-toggle");
-      const item = listMenu().find(x => x.id === id);
-      updateMenuAvailability(id, !item.available);
-      renderMenu();
+      const items = await listMenu();
+      const item = items.find(x => x.id === id);
+      await updateMenuAvailability(id, !item.available);
+      await renderMenu();
     });
   });
   menuTable.querySelectorAll("[data-delete]").forEach(btn=>{
-    btn.addEventListener("click", ()=>{
+    btn.addEventListener("click", async ()=>{
       const id = btn.getAttribute("data-delete");
       if (confirm("Delete this menu item?")) {
-        deleteMenuItem(id);
-        renderMenu();
+        await deleteMenuItem(id);
+        await renderMenu();
       }
     });
   });
 }
 
-function onVerifyCode(){
+async function onVerifyCode(){
   const code = (verifyCodeInput.value || "").trim();
   if (!code) return;
-  const updated = verifyPaymentCode(code);
+  const updated = await verifyPaymentCode(code);
   verifyResult.textContent = updated ? `Verified code for order #${updated.id.slice(0,8)} (PID ${updated.pid})` : "Code not found or already verified.";
   verifyResult.className = updated ? "success small" : "error small";
-  renderOrders();
+  await renderOrders();
 }
 
-function onCheckStudent(){
+async function onCheckStudent(){
   const pid = (studentPidInput.value || "").trim().toUpperCase();
   if (!pid) return;
-  const s = getStudent(pid);
+  const s = await getStudent(pid);
   if (!s) {
     studentStatus.textContent = `No record yet. PID ${pid} not found.`;
     studentStatus.className = "muted small";
@@ -257,17 +278,19 @@ function onCheckStudent(){
     unblockStudentBtn.disabled = true;
     return;
   }
-  const cancels = s.cancellations.length;
+  const cancels = s.cancels ? s.cancels.length : 0;
   studentStatus.innerHTML = `PID ${pid}: ${s.blocked ? "Blocked" : "Active"}${s.blockReason ? ` — ${s.blockReason}` : ""}. Total cancellations: ${cancels}`;
+  studentStatus.className = s.blocked ? "error small" : "success small";
   blockStudentBtn.disabled = s.blocked;
   unblockStudentBtn.disabled = !s.blocked;
 }
 
-function onBlockToggle(block){
+async function onBlockToggle(block){
   const pid = (studentPidInput.value || "").trim().toUpperCase();
   if (!pid) return;
-  const updated = setStudentBlocked(pid, block, block ? "Blocked by admin" : "");
+  const updated = await setStudentBlocked(pid, block, block ? "Blocked by admin" : "");
   studentStatus.textContent = `PID ${pid}: ${updated.blocked ? "Blocked" : "Active"}.`;
+  studentStatus.className = updated.blocked ? "error small" : "success small";
   blockStudentBtn.disabled = updated.blocked;
   unblockStudentBtn.disabled = !updated.blocked;
 }
@@ -291,7 +314,7 @@ function openMenuModal(item=null){
   menuModal.showModal();
 }
 
-function onMenuSave(e){
+async function onMenuSave(e){
   e.preventDefault();
   const id = menuItemId.value || undefined;
   const name = menuName.value.trim();
@@ -299,9 +322,9 @@ function onMenuSave(e){
   const imageUrl = menuImage.value.trim();
   const available = menuAvailable.checked;
   if (!name) return;
-  upsertMenuItem({ id, name, price, imageUrl, available });
+  await upsertMenuItem({ id, name, price, imageUrl, available });
   menuModal.close();
-  renderMenu();
+  await renderMenu();
 }
 
 async function onChangePassword(){
@@ -316,31 +339,13 @@ async function onChangePassword(){
 }
 
 function onExport(){
-  const blob = new Blob([exportData()], { type: "application/json" });
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(blob);
-  a.download = `canteen-data-${new Date().toISOString().replace(/[:.]/g,"-")}.json`;
-  a.click();
+  alert("Export feature is not available with Firestore backend. Use Firebase Console to export data.");
 }
 
 function onImportFile(e){
-  const file = e.target.files?.[0];
-  if (!file) return;
-  const reader = new FileReader();
-  reader.onload = () => {
-    try {
-      importDataFromJSON(reader.result);
-      alert("Data imported.");
-    } catch (err) {
-      alert("Failed to import: " + err.message);
-    }
-  };
-  reader.readAsText(file);
+  alert("Import feature is not available with Firestore backend. Use Firebase Console to import data.");
 }
 
 function onReset(){
-  if (!confirm("This will erase all data and reset to defaults. Continue?")) return;
-  factoryReset();
-  alert("Reset complete. Reloading...");
-  location.reload();
+  alert("Factory reset is not available with Firestore backend. Use Firebase Console to manage data.");
 }
