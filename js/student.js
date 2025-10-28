@@ -1,9 +1,9 @@
 // student.js
-import {
+const {
   ensureInit, listMenu, getStudent, ensureStudent, getRecentCancellationCount, getCancelThreshold,
   createOrder, setOrderPaymentCode, listOrdersByPid, cancelOrder, recordCancellation, setStudentBlocked
-} from "./storage.js";
-import { debounce, money, generatePaymentCode } from "./utils.js";
+} = window.CanteenStorage;
+const { debounce, money, generatePaymentCode } = window.CanteenUtils;
 
 const menuGrid = document.getElementById("menuGrid");
 const searchInput = document.getElementById("searchInput");
@@ -93,9 +93,7 @@ function renderMenu(){
     const url = it.imageUrl || "https://images.unsplash.com/photo-1540189549336-e6e99c3679fe?q=80&w=400&auto=format&fit=crop";
     card.innerHTML = `
       <img class="menu-img" alt="${it.name}" src="${url}">
-      <div class="menu-title-row">
-        <h3 class="menu-title">${it.name}</h3>
-      </div>
+      <h3 class="menu-title">${it.name}</h3>
       <div class="menu-sub">
         <div>₹ ${money(it.price)}</div>
         ${it.available ? `<div class="qty-row">

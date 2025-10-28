@@ -1,6 +1,7 @@
 // storage.js - simple localStorage-backed data layer
-import { uuid, nowISO, sha256, hoursAgo } from "./utils.js";
+const { uuid, nowISO, sha256, hoursAgo } = window.CanteenUtils;
 
+window.CanteenStorage = (function(){
 const NAMESPACE = "cms_v1";
 
 const DEFAULTS = {
@@ -29,7 +30,7 @@ function writeAll(obj) {
   window.dispatchEvent(new CustomEvent("cms:storage-updated"));
 }
 
-export async function ensureInit() {
+async function ensureInit() {
   let data = readAll();
   if (!data) {
     data = structuredClone(DEFAULTS);
@@ -40,18 +41,18 @@ export async function ensureInit() {
   return true;
 }
 
-export function exportData() {
+function exportData() {
   const data = readAll() || structuredClone(DEFAULTS);
   return JSON.stringify(data, null, 2);
 }
 
-export function importDataFromJSON(json) {
+function importDataFromJSON(json) {
   const parsed = JSON.parse(json);
   if (!parsed || typeof parsed !== "object") throw new Error("Invalid data");
   writeAll(parsed);
 }
 
-export function factoryReset() {
+function factoryReset() {
   localStorage.removeItem(NAMESPACE);
   window.dispatchEvent(new CustomEvent("cms:storage-updated"));
 }
@@ -69,24 +70,24 @@ function saveData(mutator) {
 }
 
 // Settings
-export function getSettings() { return getData().settings; }
-export async function setAdminPassword(newPassword) {
+function getSettings() { return getData().settings; }
+async function setAdminPassword(newPassword) {
   const hash = await sha256(newPassword);
   saveData(d => { d.settings.adminPasswordHash = hash; });
 }
-export function getCancelThreshold() { return getData().settings.cancelThreshold24h ?? 3; }
-export function setCancelThreshold(n) { saveData(d => { d.settings.cancelThreshold24h = Math.max(1, Math.min(10, Number(n)||3)); }); }
+function getCancelThreshold() { return getData().settings.cancelThreshold24h ?? 3; }
+function setCancelThreshold(n) { saveData(d => { d.settings.cancelThreshold24h = Math.max(1, Math.min(10, Number(n)||3)); }); }
 
 // Auth
-export async function checkAdminPassword(pass) {
+async function checkAdminPassword(pass) {
   const hash = await sha256(pass);
   return hash === getData().settings.adminPasswordHash;
 }
 
 // Menu
-export function listMenu() { return getData().menu; }
-export function getMenuItem(id) { return getData().menu.find(m => m.id === id); }
-export function upsertMenuItem(item) {
+function listMenu() { return getData().menu; }
+function getMenuItem(id) { return getData().menu.find(m => m.id === id); }
+function upsertMenuItem(item) {
   saveData(d => {
     const i = d.menu.findIndex(m => m.id === item.id);
     if (i >= 0) {
@@ -96,24 +97,24 @@ export function upsertMenuItem(item) {
     }
   });
 }
-export function updateMenuAvailability(id, available) {
+function updateMenuAvailability(id, available) {
   saveData(d => {
     const it = d.menu.find(m => m.id === id);
     if (it) { it.available = !!available; it.updatedAt = nowISO(); }
   });
 }
-export function deleteMenuItem(id) {
+function deleteMenuItem(id) {
   saveData(d => { d.menu = d.menu.filter(m => m.id !== id); });
 }
 
 // Students
-export function getStudent(pid) {
+function getStudent(pid) {
   const key = String(pid || "").trim().toUpperCase();
   const s = getData().students[key];
   if (!s) return null;
   return { pid: key, ...s };
 }
-export function ensureStudent(pid) {
+function ensureStudent(pid) {
   const key = String(pid || "").trim().toUpperCase();
   saveData(d => {
     if (!d.students[key]) {
@@ -122,7 +123,7 @@ export function ensureStudent(pid) {
   });
   return getStudent(key);
 }
-export function setStudentBlocked(pid, blocked, reason = "") {
+function setStudentBlocked(pid, blocked, reason = "") {
   const key = String(pid || "").trim().toUpperCase();
   saveData(d => {
     if (!d.students[key]) d.students[key] = { blocked: false, cancellations: [], createdAt: nowISO(), updatedAt: nowISO(), blockReason: "" };
@@ -132,7 +133,7 @@ export function setStudentBlocked(pid, blocked, reason = "") {
   });
   return getStudent(key);
 }
-export function recordCancellation(pid) {
+function recordCancellation(pid) {
   const key = String(pid || "").trim().toUpperCase();
   saveData(d => {
     if (!d.students[key]) d.students[key] = { blocked: false, cancellations: [], createdAt: nowISO(), updatedAt: nowISO(), blockReason: "" };
@@ -140,7 +141,7 @@ export function recordCancellation(pid) {
     d.students[key].updatedAt = nowISO();
   });
 }
-export function getRecentCancellationCount(pid, hours = 24) {
+function getRecentCancellationCount(pid, hours = 24) {
   const key = String(pid || "").trim().toUpperCase();
   const s = getData().students[key];
   if (!s) return 0;
@@ -149,17 +150,17 @@ export function getRecentCancellationCount(pid, hours = 24) {
 }
 
 // Orders
-export function listOrders() { return getData().orders; }
-export function listOrdersByPid(pid) {
+function listOrders() { return getData().orders; }
+function listOrdersByPid(pid) {
   const key = String(pid || "").trim().toUpperCase();
   return getData().orders.filter(o => o.pid === key).sort((a,b)=> new Date(b.createdAt)-new Date(a.createdAt));
 }
-export function getOrderById(id) { return getData().orders.find(o => o.id === id); }
-export function getOrderByPaymentCode(code) {
+function getOrderById(id) { return getData().orders.find(o => o.id === id); }
+function getOrderByPaymentCode(code) {
   const c = String(code || "").trim().toUpperCase();
   return getData().orders.find(o => (o.paymentCode || "").toUpperCase() === c);
 }
-export function createOrder({ pid, items, total }) {
+function createOrder({ pid, items, total }) {
   const id = uuid();
   const order = {
     id, pid: String(pid).trim().toUpperCase(),
@@ -176,13 +177,13 @@ export function createOrder({ pid, items, total }) {
   saveData(d => { d.orders.unshift(order); });
   return order;
 }
-export function setOrderPaymentCode(orderId, code) {
+function setOrderPaymentCode(orderId, code) {
   saveData(d => {
     const o = d.orders.find(o => o.id === orderId);
     if (o) { o.paymentCode = String(code).toUpperCase(); o.status = "PAID_UNVERIFIED"; o.updatedAt = nowISO(); }
   });
 }
-export function verifyPaymentCode(code) {
+function verifyPaymentCode(code) {
   const o = getOrderByPaymentCode(code);
   if (!o) return null;
   saveData(d => {
@@ -191,13 +192,13 @@ export function verifyPaymentCode(code) {
   });
   return getOrderById(o.id);
 }
-export function fulfillOrder(orderId) {
+function fulfillOrder(orderId) {
   saveData(d => {
     const o = d.orders.find(o => o.id === orderId);
     if (o) { o.status = "FULFILLED"; o.fulfilledAt = nowISO(); o.updatedAt = nowISO(); }
   });
 }
-export function cancelOrder(orderId, by = "student") {
+function cancelOrder(orderId, by = "student") {
   saveData(d => {
     const o = d.orders.find(o => o.id === orderId);
     if (o && o.status !== "FULFILLED" && o.status !== "CANCELLED") {
@@ -208,6 +209,17 @@ export function cancelOrder(orderId, by = "student") {
   });
   return getOrderById(orderId);
 }
-export function deleteOrder(orderId) {
+function deleteOrder(orderId) {
   saveData(d => { d.orders = d.orders.filter(o => o.id !== orderId); });
 }
+
+return {
+  ensureInit, exportData, importDataFromJSON, factoryReset,
+  getSettings, setAdminPassword, getCancelThreshold, setCancelThreshold,
+  checkAdminPassword,
+  listMenu, getMenuItem, upsertMenuItem, updateMenuAvailability, deleteMenuItem,
+  getStudent, ensureStudent, setStudentBlocked, recordCancellation, getRecentCancellationCount,
+  listOrders, listOrdersByPid, getOrderById, getOrderByPaymentCode, createOrder,
+  setOrderPaymentCode, verifyPaymentCode, fulfillOrder, cancelOrder, deleteOrder
+};
+})();
