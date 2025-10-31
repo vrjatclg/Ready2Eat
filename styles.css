@@ -1,14 +1,14 @@
 :root {
-  --bg: #f1f5f9;
+  --bg: #f5f5f7;
   --card: #ffffff;
-  --muted: #7e8a9a;
-  --text: #1e293b;
-  --primary: #5a67d8;
+  --muted: #86868b;
+  --text: #1d1d1f;
+  --primary: #007aff;
   --primary-contrast: #ffffff;
-  --danger: #e53e3e;
-  --accent: #38a169;
-  --border: #e2e8f0;
-  --badge: #edf2f7;
+  --danger: #ff3b30;
+  --accent: #34c759;
+  --border: #d2d2d7;
+  --badge: #e5e5e7;
 }
 
 *{box-sizing:border-box}
@@ -16,24 +16,31 @@ html,body{margin:0;padding:0;height:100%}
 body {
   background: var(--bg);
   color: var(--text);
-  font-family: 'Inter', sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+  font-size: 16px;
+  line-height: 1.5;
 }
 
 .app-header {
   position: sticky; top: 0; z-index: 5;
   display: flex; align-items: center; justify-content: space-between;
-  padding: 10px 16px; border-bottom: 1px solid var(--border);
-  background: rgba(241, 245, 249, 0.75); backdrop-filter: saturate(140%) blur(8px);
+  padding: 12px 24px; border-bottom: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.5);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  backdrop-filter: saturate(180%) blur(20px);
 }
 .brand{display:flex; align-items:center; gap:10px}
 .brand-logo{width:28px;height:28px;filter:drop-shadow(0 2px 4px rgba(0,0,0,.3))}
 .brand-title{font-size:16px;margin:0}
 .actions{display:flex; align-items:center; gap:8px}
-.container{max-width:1100px;margin:0 auto;padding:16px}
+.container{max-width:1200px;margin:0 auto;padding:24px}
 
 .btn{
   background:var(--badge); color:var(--text);
-  border:1px solid var(--border); padding:8px 12px; border-radius:10px; cursor:pointer;
+  border:1px solid var(--border); padding:10px 16px; border-radius:12px; cursor:pointer;
+  font-size: 16px;
+  font-weight: 600;
+  transition: all 0.2s ease;
 }
 .btn:hover { filter: brightness(1.1); }
 .btn.primary { background: var(--primary); color: var(--primary-contrast); border-color: transparent; }
@@ -41,7 +48,9 @@ body {
 .btn.pill { border-radius: 999px; }
 .btn.danger { background: var(--danger); color: #fff; border-color: transparent; }
 .btn.full { width: 100%; }
-.icon-btn { background: transparent; border: 1px solid var(--border); color: var(--muted); border-radius: 8px; padding: 6px 10px; cursor: pointer; }
+.icon-btn { background: transparent; border: none; color: var(--muted); border-radius: 8px; padding: 6px; cursor: pointer; position: relative; }
+.icon-btn img { width: 24px; height: 24px; }
+.icon-btn .badge { position: absolute; top: -2px; right: -2px; }
 
 .badge { display: inline-block; min-width: 20px; padding: 2px 6px; border-radius: 999px; background: var(--badge); color: var(--text); text-align: center; border: 1px solid var(--border); }
 .muted { color: var(--muted); }
@@ -51,12 +60,17 @@ body {
 .grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-  gap: 20px;
+  gap: 24px;
 }
 
 .card {
-  background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 12px;
-  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+  background: var(--card); border: 1px solid var(--border); border-radius: 18px; padding: 16px;
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+  transition: all 0.2s ease;
+}
+.card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
 }
 .login-card { max-width: 420px; margin: 60px auto; }
 .notice {
@@ -102,7 +116,7 @@ body {
   text-align: center;
 }
 
-.menu-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; gap: 10px; flex-wrap: wrap; }
+.menu-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px; gap: 16px; flex-wrap: wrap; }
 .search input { width: 260px; max-width: 100%; background: #f8fafc; color: var(--text); border: 1px solid var(--border); padding: 8px 10px; border-radius: 8px; }
 .filters { display: flex; align-items: center; gap: 12px; }
 .toggle { display: flex; align-items: center; gap: 8px; cursor: pointer; }
@@ -137,12 +151,24 @@ body {
 
 .field { display: flex; flex-direction: column; gap: 6px; margin: 8px 0; }
 .field input, .field select {
-  background: #f8fafc; color: var(--text); border: 1px solid var(--border); padding: 8px 10px; border-radius: 8px; width: 100%;
+  background: #f8fafc; color: var(--text); border: 1px solid var(--border); padding: 10px 12px; border-radius: 12px; width: 100%;
+  font-size: 16px;
+}
+.field input:focus, .field select:focus {
+  outline: 2px solid var(--primary);
+  border-color: transparent;
 }
 
-.modal { border: none; border-radius: 14px; padding: 0; background: transparent; }
-.modal::backdrop { background: rgba(0,0,0,.6); }
-.modal-card { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 16px; min-width: 300px; max-width: 480px; }
+.modal { border: none; border-radius: 18px; padding: 0; background: transparent; }
+.modal::backdrop {
+  background: rgba(0, 0, 0, 0.4);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+}
+.modal-card {
+  background: var(--card); border: 1px solid var(--border); border-radius: 18px; padding: 24px; min-width: 300px; max-width: 480px;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+}
 .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 10px; }
 .payment-summary { display: flex; justify-content: space-between; align-items: center; border: 1px dashed var(--border); padding: 10px; border-radius: 10px; margin: 10px 0; }
 .payment-summary .amount { font-size: 18px; font-weight: 700; }
